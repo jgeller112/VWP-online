@@ -1,0 +1,344 @@
+---
+    title: "VWP Online Processing"
+    author:
+      - name: Jason Geller
+    date: last-modified
+    format:
+      html:
+        self-contained: true
+        anchor-sections: true
+        code-tools: true
+        code-fold: true
+        fig-width: 6
+        fig-height: 4
+        code-block-bg: "#f1f3f5"
+        code-block-border-left: "#31BAE9"
+        mainfont: Source Sans Pro
+        theme: journal
+        toc: true
+        toc-depth: 3
+        toc-location: left
+        captions: true
+        cap-location: margin
+        table-captions: true
+        tbl-cap-location: margin
+        reference-location: margin
+      pdf:
+        pdf-engine: lualatex
+        toc: false
+        number-sections: true
+        number-depth: 2
+        top-level-division: section
+        reference-location: document
+        listings: false
+        header-includes:
+          \usepackage{marginnote, here, relsize, needspace, setspace}
+          \def\it{\emph}
+
+    comments:
+      hypothesis: false
+
+    execute:
+      warning: false
+      message: false
+---
+
+This tutorial demonstrates how to analyze online eye-tracking data from Gorilla. The data is taken from a sample version of the visual world paradigm where Target, Cohort, Rhyme, and  and Unrelated (TCRU) pictures are presented in one of the four quadrants on the screen (top left, top right, bottom right, bottom left) randomly. A spoken word is presented after the pictures are presented on the screen and participants must select (with a mouse) which picture matched the spoken word. 
+
+:::{.callout-warning}
+There was some audio-visual lag so we delayed the audio by a couple hundred milliseconds. 
+:::
+
+
+# Load Packages
+
+Before turning to the code below, please install the packages by running the code below this paragraph. If you have already installed the packages mentioned below, then you can skip ahead and ignore this section. To install the necessary packages, simply run the following code - it may take some time (between 1 and 5 minutes to install all of the libraries so you do not need to worry if it takes some time).
+
+```{r}
+
+options(stringsAsFactors = F)          # no automatic data transformation
+
+options("scipen" = 100, "digits" = 10) # suppress math annotation
+
+library(tidyverse)
+
+library(data.table)
+
+library(here)
+
+library(gazer)
+
+library(knitr)
+
+library(flextable)
+
+
+
+```
+
+# File Paths 
+
+Using the `here` package we get to grab our raw trial data from Gorilla. In addition we have the path to our trial-level data file we will also read in.
+
+```{r}
+
+vwp_files<-list.files(here::here("jason", "uploads"), pattern = ".xlsx") # get files 
+agg_eye_data <- read.csv(here::here("jason", "data_exp_77588-v10_task-8vmc.csv"))
+
+```
+
+# Merge Files
+
+With the below code we merge all the trials from each participant into one file saved to an object called `eye_data`
+
+```{r}
+#| echo: true
+
+
+# merge all data files (gorilla stores each trial as one file for each p)
+setwd(here::here("data-raw", "VWP"))
+
+  eye_data <- lapply(vwp_files,  readxl::read_excel)%>% 
+    
+    bind_rows() %>%
+    
+   dplyr::filter(type=="prediction") %>%
+    
+    dplyr::rename("trial" = "spreadsheet_row", "subject" = "participant_id", "time" = "time_elapsed") %>%
+    
+    dplyr::mutate(trial=factor(trial))%>%
+    
+     dplyr::select(subject, trial, time,face_conf, x_pred_normalised, y_pred_normalised)
+
+
+count(eye_data, subject)
+
+```
+
+
+
+# Trial-level Information
+
+Gorilla produces a a `.csv` file that include trial-level information. Below we read that file in and create an object called `trial_data` that selects useful columns from that file and renames stimuli.
+
+```{r}
+
+#|message: false
+#|echo: true
+#|
+
+trial_data <- agg_eye_data %>%
+
+select(Participant.Private.ID,Trial.Number, Correct, targ_pic, cohort_pic, rhyme_pic, ur_pic, targ, cohort, rhyme, ur, Zone.Name, Zone.Type, targ_1, Experiment.Version, Reaction.Time) %>%
+
+  filter(Zone.Type=="response_button_image")%>%
+
+  #the coln names correspond to locations not actual pics. These are coded in other columns
+
+  rename("TL" = "targ_pic", "TR" = "cohort_pic", "BL" = "rhyme_pic", "BR" = "ur_pic", "targ_loc"= "Zone.Name", "subject" = "Participant.Private.ID", "trial" ="Trial.Number", "acc" = "Correct", "RT" =
+           "Reaction.Time") %>%
+
+  distinct() %>%
+
+  na.omit()
+
+
+
+
+```
+
+```{r}
+ head(trial_data) %>% 
+flextable() %>%
+  flextable::set_table_properties(width = .5, layout = "autofit") %>%
+  flextable::theme_zebra() %>%
+  flextable::fontsize(size = 12) %>%
+  flextable::fontsize(size = 12, part = "header") %>%
+  flextable::align_text_col(align = "center") %>%
+  flextable::set_caption(caption = "")  %>%
+  flextable::border_outer()
+
+```
+
+# Zone Coordinates
+
+In the lab, we can control every aspect of the experiment. Online we cant do this. Participants are going to be completing the experiment under a variety of conditions. This includes using different computers, with very different screen dimensions. To control for this, Gorilla outputs standardized zone coordinates. In the current data, (in our case: top left, bottom left, top right, bottom right).
+
+Below we are going to create a a data frame with our AOI locations and dimensions on the screen. This will be used in conjunction with the gazeR function `assign_aoi` which will loop through our data and assign whether an AOI was fixated or not.
+
+```{r}
+aoi_loc <- data.frame(loc = c("TL", "BL", "TR", "BR"),
+           x_normalized = c(0.0202, 0.0300,0.73, .73),
+           y_normalized = c(0.74,.04 , .75, .06),
+           width_normalized = c(0.26,0.26, 0.24, 0.23),
+           height_normalized = c(0.25,0.25, 0.24, 0.23)) %>% 
+  mutate(xmin = x_normalized, ymin = y_normalized,
+         xmax = x_normalized+width_normalized,
+         ymax = y_normalized+height_normalized)
+
+kable(aoi_loc)
+```
+## Matching Conditions with Screen Locations 
+
+We need to know the condition (i.e., Target, Cohort, Rhyme, Unrelated) of each image shown as well as the location of each image on every trial. 
+
+```{r}
+
+
+c=trial_data %>% select(-Zone.Type, -targ_1, -targ, -cohort, -rhyme, -ur, -targ_loc) %>%
+ pivot_longer(TL:BR, names_to="loc_screen")
+
+c2=trial_data %>% select(-Zone.Type, -targ_1, -TL, -TR, -BL, -BR, -targ_loc) %>% pivot_longer(targ:ur, names_to = "cond")
+
+
+pic_merge <- merge(c, c2, by=c("subject", "trial", "acc", "value", "RT")) # have to merge loc of pictures 
+
+kable(head(pic_merge))
+
+
+rt=pic_merge %>%
+  summarise(rt=mean(RT, na.rm=TRUE))
+
+```
+
+Once we have this we merge it with `eye_data`. We then arrange the data, pivot our `condition` variable to wide from long, and filter out incorrect responses and low confidence values.
+
+```{r}
+
+
+edatibs <- left_join(eye_data,pic_merge, by = c("subject", "trial"))
+
+
+edatibs1 <- edatibs %>%
+  arrange(subject, trial, time)%>%
+  select(-value)%>%
+  pivot_wider(names_from = cond, values_from = "loc_screen")%>%
+  select(-"NA") %>%
+  filter(face_conf >= .5, acc==1, Experiment.Version.x==10)
+
+head(edatibs1)
+```
+
+Here is where we are going to use our coordinate information from above. We use the `gazer` function `assign_aoi` to loop through our object `edatibs1` and assign locations (i.e., TR, TL, BL, BR) to our normalized `x` and `y` coordinates. To make it easier to read we change the numerals assigned by the function to actual screen locations.
+
+```{r}
+
+assign <- gazer::assign_aoi(edatibs1,screen_size = c(1,1),X="x_pred_normalised", Y="y_pred_normalised",aoi_loc = aoi_loc)
+
+ 
+
+AOI <- assign %>%
+
+  mutate(loc1 = case_when(
+
+    AOI==1 ~ "TL", 
+
+    AOI==2 ~ "BL", 
+
+    AOI==3 ~ "TR", 
+
+    AOI==4 ~ "BR"
+
+  ))%>%
+
+  arrange(subject, trial, time)
+
+kable(head(AOI))
+
+
+```
+
+In the `AOI` object we have our condition variables as columns. For this example, the fixation locations need to be "gathered" from separate columns into a single column and "NA" values need to be re-coded as no-fixations. We logically evaluate these below so we know which item was fixated each sample and what was not.
+
+```{r}
+
+AOI$target <- AOI$loc1 == AOI$targ
+
+AOI$unrelated <- AOI$loc1 == AOI$ur
+
+
+AOI$r <- AOI$loc1 == AOI$rhyme
+
+
+AOI$co <- AOI$loc1 == AOI$cohort
+
+
+AOI <- AOI %>% 
+select(-targ,-ur, -cohort, -rhyme)%>%
+  pivot_longer(target:co, names_to="condition", values_to="fix" ) %>% 
+  filter(acc==1)
+
+kable(head(AOI))
+```
+## Non-looks
+
+There are two ways we can handle missingness here. We can either re-code the NA values as non-looks, or we can exclude looks that occurred outside an AOI. 
+
+Here we are going to treat non-looks as missing variables and exclude them. If you wanted to re-code NAs as non-looks you can run the below code. The column `Fix` assigns non-looks as FALSE. The column `fix` treats all non-looks as NAs. 
+
+```{r}
+
+
+gaze_obj <- AOI %>% 
+dplyr::mutate(Fix=replace_na(fix, FALSE))
+  
+
+kable(head(gaze_obj))
+
+```
+
+
+# Samples to Bins
+
+Researchers may decide to down sample their data. Here we down sample to 200 ms bins and get the aggregate across time and condition for plotting. We will end up with proportion looks to each of the AOIs which is stored in the `meanfix` column.  
+
+:::{.callout-warning}
+
+Here we filter the data to start at 1500 ms and end at 4000 ms. The reason for this is that we delay the start of the audio so it is not played before the presentation of the images. 
+:::
+
+```{r}
+
+gaze_sub <- gaze_obj %>% 
+  mutate(bin= 200*floor(time/200)) %>% # timebin
+  filter(bin >1500, bin <=2500) %>% # 
+  group_by(condition, bin) %>%
+  summarise(meanfix = mean(fix, na.rm = TRUE))
+
+
+
+kable(head(gaze_sub))
+
+
+```
+
+# Plotting
+
+We subset our data by only including data between 200 ms and 5000 ms. Things seem to be a bit delayed in the online version of the VWP.
+
+```{r}
+
+gaze_subj1 <- gaze_sub %>%
+       
+
+ggplot() +
+
+  aes(x=bin,y=meanfix, color=condition) + 
+  
+  geom_line()
+
+
+ gaze_subj1           
+
+```
+
+We see that the data is very noisy, but we do see a higher proportion of looks to the target at about 4 s. 
+
+
+
+```{r}
+
+sessionInfo()
+```
+
+
