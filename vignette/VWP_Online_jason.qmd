@@ -43,12 +43,11 @@
       message: false
 ---
 
-This tutorial demonstrates how to analyze online eye-tracking data from Gorilla. The data is taken from a sample version of the visual world paradigm where Target, Cohort, Rhyme, and  and Unrelated (TCRU) pictures are presented in one of the four quadrants on the screen (top left, top right, bottom right, bottom left) randomly. A spoken word is presented after the pictures are presented on the screen and participants must select (with a mouse) which picture matched the spoken word. 
+This tutorial demonstrates how to analyze online eye-tracking data from Gorilla. The data is taken from a sample version of the visual world paradigm where Target, Cohort, Rhyme, and and Unrelated (TCRU) pictures are presented in one of the four quadrants on the screen (top left, top right, bottom right, bottom left) randomly. A spoken word is presented after the pictures are presented on the screen and participants must select (with a mouse) which picture matched the spoken word.
 
-:::{.callout-warning}
-There was some audio-visual lag so we delayed the audio by a couple hundred milliseconds. The pictures appeared on screen for 1500 ms and then the audio played. There is also a version where we did not do this. 
+::: callout-warning
+There was some audio-visual lag so we delayed the audio by a couple hundred milliseconds. The pictures appeared on screen for 1500 ms and then the audio played. There is also a version where we did not do this.
 :::
-
 
 # Load Packages
 
@@ -70,16 +69,20 @@ library(gazer)
 library(knitr)
 
 library(flextable)
+
+library(tinytable)
+
 ```
 
-# File Paths 
+# File Paths
 
 Using the `here` package we get to grab our raw trial data from Gorilla. In addition we have the path to our trial-level data file we will also read in.
 
 ```{r}
 
-vwp_files<-list.files(here::here("jason", "uploads"), pattern = ".xlsx") # get files 
-agg_eye_data <- read.csv(here::here("jason", "data_exp_77588-v10_task-8vmc.csv"))
+vwp_files<-list.files(here::here("data", "uploads"), pattern = ".xlsx") # get files 
+
+agg_eye_data <- read.csv(here::here("data", "data_exp_77588-v10_task-8vmc.csv"))
 
 ```
 
@@ -90,7 +93,7 @@ With the below code we merge all the trials from each participant into one file 
 ```{r}
 #| echo: true
 # merge all data files (gorilla stores each trial as one file for each p)
-setwd(here::here("jason", "uploads"))
+setwd(here::here("data", "uploads"))
 
   eye_data <- lapply(vwp_files,  readxl::read_excel)%>% 
     
@@ -109,7 +112,24 @@ count(eye_data, subject)
 
 ```
 
+## Sampling rate
 
+```{r}
+
+edatSR <- eye_data  %>%
+  dplyr::group_by(subject, trial) %>%
+   dplyr::summarise(meanSR=1000/(max(time)/length(time)))
+
+head(edatSR)
+
+samp_average <- edatSR %>%
+  group_by(subject) %>%
+  summarise(avg_SR=mean(meanSR))
+
+samp_average
+
+
+```
 
 # Trial-level Information
 
@@ -129,7 +149,7 @@ select(Participant.Private.ID,Trial.Number, Correct, targ_pic, cohort_pic, rhyme
 
   #the coln names correspond to locations not actual pics. These are coded in other columns
 
-  rename("TL" = "targ_pic", "TR" = "cohort_pic", "BL" = "rhyme_pic", "BR" = "ur_pic", "targ_loc"= "Zone.Name", "subject" = "Participant.Private.ID", "trial" ="Trial.Number", "acc" = "Correct", "RT" =
+  rename("TL" = "targ_pic", "BL" = "cohort_pic", "TR" = "rhyme_pic", "BR" = "ur_pic", "targ_loc"= "Zone.Name", "subject" = "Participant.Private.ID", "trial" ="Trial.Number", "acc" = "Correct", "RT" =
            "Reaction.Time") %>%
 mutate(RT = as.numeric(RT)) %>% 
 
@@ -139,10 +159,10 @@ mutate(RT = as.numeric(RT)) %>%
 
 
 ```
+
 ## Get Audio Onset Time
 
-
-- The audio was triggered 1500 ms after the onset. Gorilla records the onset of the audio which varies. We are extracting that here. 
+-   The audio was triggered 1500 ms after the onset. Gorilla records the onset of the audio which varies. We are extracting that here.
 
 ```{r}
 
@@ -159,12 +179,12 @@ mutate(RT_audio=as.numeric(RT_audio))
 ```
 
 ```{r}
+
 trial_data_rt <- merge(trial_data, audio_rt, by=c("subject", "trial"))
 
 head(trial_data_rt)
 
 ```
-
 
 ```{r}
  head(trial_data_rt) %>% 
@@ -176,7 +196,6 @@ flextable() %>%
   flextable::align_text_col(align = "center") %>%
   flextable::set_caption(caption = "")  %>%
   flextable::border_outer()
-
 ```
 
 # Zone Coordinates
@@ -197,9 +216,10 @@ aoi_loc <- data.frame(loc = c("TL", "BL", "TR", "BR"),
 
 tinytable::tt(aoi_loc)
 ```
-## Matching Conditions with Screen Locations 
 
-We need to know the condition (i.e., Target, Cohort, Rhyme, Unrelated) of each image shown as well as the location of each image on every trial. 
+## Matching Conditions with Screen Locations
+
+We need to know the condition (i.e., Target, Cohort, Rhyme, Unrelated) of each image shown as well as the location of each image on every trial.
 
 ```{r}
 
@@ -232,7 +252,7 @@ edatibs1 <- edatibs %>%
   select(-value)%>%
   pivot_wider(names_from = cond, values_from = "loc_screen")%>%
   select(-"NA") %>%
-  filter(face_conf >= .5, acc>=.8, Experiment.Version.x==10)
+  filter(face_conf >= .5, acc==1, Experiment.Version.x==10)
 
 head(edatibs1)
 ```
@@ -241,9 +261,71 @@ Here is where we are going to use our coordinate information from above. We use 
 
 ```{r}
 
+center=.5#center of screen
+distance=0#distance to visual stimuli
+beyond_screen=1 #distance to beyond_screen
+
+
+all_data<-edatibs1 %>%
+ mutate(image_viewing=
+ case_when(x_pred_normalised <= center-distance &
+ y_pred_normalised >= center+distance ~ "TL",
+ x_pred_normalised >= center+distance &
+ y_pred_normalised >= center+distance ~ "TR",
+ x_pred_normalised <= center-distance &
+ y_pred_normalised <= center-distance ~ "BL", 
+ x_pred_normalised >= center+distance &
+ y_pred_normalised <= center-distance ~ "BR"))%>%
+filter(!is.na(image_viewing))
+
+all_data<-all_data %>%
+ mutate(target_pic = if_else(image_viewing == targ, 1, 0),
+ unrelated_pic = if_else(image_viewing == ur, 1, 0),
+rhyme_pic = if_else(image_viewing ==  rhyme, 1, 0),
+ cohort_pic  = if_else(image_viewing == cohort, 1, 0))%>%
+filter(x_pred_normalised>center-beyond_screen &
+x_pred_normalised<center+beyond_screen&
+y_pred_normalised>center-beyond_screen &
+y_pred_normalised<center+beyond_screen)
+
+```
+
+```{r}
+AOI <- all_data  %>% 
+select(-targ,-ur, -cohort, -rhyme)%>%
+  pivot_longer(target_pic:cohort_pic, names_to="condition", values_to="fix" ) %>% 
+  filter(acc==1)
+
+head(AOI)
+
+```
+
+```{r}
+
+
+gaze_obj <- AOI %>% 
+dplyr::mutate(Fix=replace_na(fix, FALSE))
+  
+gaze_sub <- gaze_obj %>% 
+group_by(subject, trial) %>%
+mutate(audio_onset=time-RT_audio) %>% 
+ filter(audio_onset >= -200, audio_onset <=1000) %>% 
+  mutate(bin= 100*floor(audio_onset/100)) %>% # timebin
+ungroup() %>% 
+  group_by(condition, bin) %>%
+  summarise(meanfix = mean(fix, na.rm = TRUE))
+
+
+kable(head(gaze_sub))
+
+
+```
+
+```{r}
+
 assign <- gazer::assign_aoi(edatibs1,screen_size = c(1,1),X="x_pred_normalised", Y="y_pred_normalised",aoi_loc = aoi_loc)
 
- 
+
 
 AOI <- assign %>%
 
@@ -288,31 +370,28 @@ select(-targ,-ur, -cohort, -rhyme)%>%
 
 head(AOI)
 ```
+
 ## Non-looks
 
-There are two ways we can handle missingness here. We can either re-code the NA values as non-looks, or we can exclude looks that occurred outside an AOI. 
+There are two ways we can handle missingness here. We can either re-code the NA values as non-looks, or we can exclude looks that occurred outside an AOI.
 
-Here we are going to treat non-looks as missing variables and exclude them. If you wanted to re-code NAs as non-looks you can run the below code. The column `Fix` assigns non-looks as FALSE. The column `fix` treats all non-looks as NAs. 
+Here we are going to treat non-looks as missing variables and exclude them. If you wanted to re-code NAs as non-looks you can run the below code. The column `Fix` assigns non-looks as FALSE. The column `fix` treats all non-looks as NAs.
 
 ```{r}
-
 
 gaze_obj <- AOI %>% 
 dplyr::mutate(Fix=replace_na(fix, FALSE))
   
-
 kable(head(gaze_obj))
 
 ```
 
-
 # Samples to Bins
 
-Researchers may decide to down sample their data. Here we down sample to 200 ms bins and get the aggregate across time and condition for plotting. We will end up with proportion looks to each of the AOIs which is stored in the `meanfix` column.  
+Researchers may decide to down sample their data. Here we down sample to 200 ms bins and get the aggregate across time and condition for plotting. We will end up with proportion looks to each of the AOIs which is stored in the `meanfix` column.
 
-:::{.callout-warning}
-
-Here we filter the data to start at 1500 ms and end at 4000 ms. The reason for this is that we delay the start of the audio so it is not played before the presentation of the images. 
+::: callout-warning
+Here we filter the data to start at 1500 ms and end at 4000 ms. The reason for this is that we delay the start of the audio so it is not played before the presentation of the images.
 :::
 
 ```{r}
@@ -320,8 +399,8 @@ Here we filter the data to start at 1500 ms and end at 4000 ms. The reason for t
 gaze_sub <- gaze_obj %>% 
 group_by(subject, trial) %>%
 mutate(audio_onset=time-RT_audio) %>% 
- filter( audio_onset <=1000) %>% 
-  mutate(bin= 100*floor(audio_onset/100)) %>% # timebin
+ filter(audio_onset>=0, audio_onset<=1000) %>% 
+  mutate(bin= 200*floor(audio_onset/200)) %>% # timebin
 ungroup() %>% 
   group_by(condition, bin) %>%
   summarise(meanfix = mean(fix, na.rm = TRUE))
@@ -338,8 +417,8 @@ We subset our data by only including data between 200 ms and 5000 ms. Things see
 
 ```{r}
 
-gaze_subj1 <- gaze_sub %>%
-       
+gaze_subj1 <- gaze_sub  %>% 
+  
 ggplot() +
 
   aes(x=bin,y=meanfix, color=condition) + 
@@ -351,7 +430,7 @@ ggplot() +
 
 ```
 
-We see that the data is very noisy, but we do see a higher proportion of looks to the target at about 1 s post audio onset 
+We see that the data is very noisy, but we do see a higher proportion of looks to the target at about 1 s post audio onset
 
 ```{r}
 sessionInfo()
@@ -359,14 +438,15 @@ sessionInfo()
 
 # Target Same Location
 
-# File Paths 
+# File Paths
 
 Using the `here` package we get to grab our raw trial data from Gorilla. In addition we have the path to our trial-level data file we will also read in.
 
 ```{r}
 
-vwp_files<-list.files(here::here("jason", "target", "uploads"), pattern = ".xlsx") # get files 
-agg_eye_data <- read.csv(here::here("jason","target",  "data_exp_77588-v12_task-8vmc.csv"))
+vwp_files<-list.files(here::here("data", "target_same_loc_data", "uploads"), pattern = ".xlsx") # get files 
+
+agg_eye_data <- read.csv(here::here("data","target_same_loc_data",  "data_exp_77588-v12_task-8vmc.csv"))
 
 ```
 
@@ -377,7 +457,7 @@ With the below code we merge all the trials from each participant into one file 
 ```{r}
 #| echo: true
 # merge all data files (gorilla stores each trial as one file for each p)
-setwd(here::here("jason","target",  "uploads"))
+setwd(here::here("data","target_same_loc_data",  "uploads"))
 
   eye_data <- lapply(vwp_files,  readxl::read_excel)%>% 
     
@@ -393,6 +473,20 @@ setwd(here::here("jason","target",  "uploads"))
 
 
 count(eye_data, subject)
+
+```
+
+## Sample rate
+
+```{r}
+
+
+edatSR <- eye_data  %>%
+  dplyr::group_by(subject, trial) %>%
+   dplyr::summarise(meanSR=1000/(max(time)/length(time)))
+
+head(edatSR)
+
 
 ```
 
@@ -414,7 +508,7 @@ select(Participant.Private.ID,Trial.Number, Correct, targ_pic, cohort_pic, rhyme
 
   #the coln names correspond to locations not actual pics. These are coded in other columns
 
-  rename("TL" = "targ_pic", "TR" = "cohort_pic", "BL" = "rhyme_pic", "BR" = "ur_pic", "targ_loc"= "Zone.Name", "subject" = "Participant.Private.ID", "trial" ="Trial.Number", "acc" = "Correct", "RT" =
+  rename("TL" = "targ_pic", "BL" = "cohort_pic", "TR" = "rhyme_pic", "BR" = "ur_pic", "targ_loc"= "Zone.Name", "subject" = "Participant.Private.ID", "trial" ="Trial.Number", "acc" = "Correct", "RT" =
            "Reaction.Time") %>%
 mutate(RT = as.numeric(RT)) %>% 
 
@@ -424,10 +518,10 @@ mutate(RT = as.numeric(RT)) %>%
 
 
 ```
+
 ## Get Audio Onset Time
 
-
-- The audio was triggered 1500 ms after the onset. Gorilla records the onset of the audio which varies. We are extracting that here. 
+-   The audio was triggered immediately after the onset. Gorilla records the onset of the audio which varies. We are extracting that here.
 
 ```{r}
 
@@ -462,7 +556,7 @@ flextable() %>%
 
 ```
 
-# Zone Coordinates
+# Zone coordinates
 
 In the lab, we can control every aspect of the experiment. Online we cant do this. Participants are going to be completing the experiment under a variety of conditions. This includes using different computers, with very different screen dimensions. To control for this, Gorilla outputs standardized zone coordinates. In the current data, (in our case: top left, bottom left, top right, bottom right).
 
@@ -480,9 +574,102 @@ aoi_loc <- data.frame(loc = c("TL", "BL", "TR", "BR"),
 
 tinytable::tt(aoi_loc)
 ```
-## Matching Conditions with Screen Locations 
 
-We need to know the condition (i.e., Target, Cohort, Rhyme, Unrelated) of each image shown as well as the location of each image on every trial. 
+## Bramlett and Wiener Pipeline
+
+```{r}
+
+center=.5#center of screen
+distance=0#distance to visual stimuli
+beyond_screen=1 #distance to beyond_screen
+
+
+all_data<-edatibs_1_1 %>%
+ mutate(image_viewing=
+ case_when(x_pred_normalised <= center-distance &
+ y_pred_normalised >= center+distance ~ "TL",
+ x_pred_normalised >= center+distance &
+ y_pred_normalised >= center+distance ~ "TR",
+ x_pred_normalised <= center-distance &
+ y_pred_normalised <= center-distance ~ "BL", 
+ x_pred_normalised >= center+distance &
+ y_pred_normalised <= center-distance ~ "BR"))%>%
+filter(!is.na(image_viewing))
+
+all_data<-all_data %>%
+ mutate(target_pic = if_else(image_viewing == "TL", 1, 0),
+ unrelated_pic = if_else(image_viewing == "BR", 1, 0),
+rhyme_pic = if_else(image_viewing == "TR", 1, 0),
+ cohort_pic = if_else(image_viewing == "BL", 1, 0))%>%
+filter(x_pred_normalised>center-beyond_screen &
+x_pred_normalised<center+beyond_screen&
+y_pred_normalised>center-beyond_screen &
+y_pred_normalised<center+beyond_screen)
+
+```
+
+```{r}
+
+AOI <- all_data  %>% 
+select(-targ,-ur, -cohort, -rhyme)%>%
+  pivot_longer(target_pic:cohort_pic, names_to="condition", values_to="fix" ) %>% 
+  filter(acc==1)
+
+head(AOI)
+
+```
+
+```{r}
+
+gaze_obj <- AOI %>% 
+dplyr::mutate(Fix=replace_na(fix, FALSE))
+  
+gaze_sub <- gaze_obj %>% 
+group_by(subject, trial) %>%
+mutate(audio_onset=time-RT_audio) %>% 
+ filter(audio_onset >= 0, audio_onset <=1000) %>% 
+  mutate(bin= 50*floor(audio_onset/50)) %>% # timebin
+ungroup() %>% 
+  group_by(condition, bin) %>%
+  summarise(meanfix = mean(fix, na.rm = TRUE))
+
+
+kable(head(gaze_sub))
+```
+
+## Sampling rate
+
+```{r}
+
+# histogram with added parameters
+hist(edatSR_part$avgSR_part,
+#main="The Distribution of Participants' Sampling Rate",
+xlab="Sampling Rate (Hz)",
+xlim=c(0,35),
+col="cyan3",
+freq=TRUE
+)
+
+```
+
+```{r}
+
+gaze_subj1 <- gaze_sub %>%
+       
+
+ggplot() +
+
+  aes(x=bin,y=meanfix, color=condition) + 
+  
+  geom_line()
+
+
+gaze_subj1
+```
+
+## Matching conditions with screen locations
+
+We need to know the condition (i.e., Target, Cohort, Rhyme, Unrelated) of each image shown as well as the location of each image on every trial.
 
 ```{r}
 
@@ -516,6 +703,7 @@ edatibs_1_1 <- edatibs_1 %>%
 
 head(edatibs_1_1)
 ```
+
 Here is where we are going to use our coordinate information from above. We use the `gazer` function `assign_aoi` to loop through our object `edatibs1` and assign locations (i.e., TR, TL, BL, BR) to our normalized `x` and `y` coordinates. To make it easier to read we change the numerals assigned by the function to actual screen locations.
 
 ```{r}
@@ -567,11 +755,12 @@ select(-targ,-ur, -cohort, -rhyme)%>%
 
 head(AOI)
 ```
+
 ## Non-looks
 
-There are two ways we can handle missingness here. We can either re-code the NA values as non-looks, or we can exclude looks that occurred outside an AOI. 
+There are two ways we can handle missingness here. We can either re-code the NA values as non-looks, or we can exclude looks that occurred outside an AOI.
 
-Here we are going to treat non-looks as missing variables and exclude them. If you wanted to re-code NAs as non-looks you can run the below code. The column `Fix` assigns non-looks as FALSE. The column `fix` treats all non-looks as NAs. 
+Here we are going to treat non-looks as missing variables and exclude them. If you wanted to re-code NAs as non-looks you can run the below code. The column `Fix` assigns non-looks as FALSE. The column `fix` treats all non-looks as NAs.
 
 ```{r}
 
@@ -584,14 +773,12 @@ kable(head(gaze_obj))
 
 ```
 
-
 # Samples to Bins
 
-Researchers may decide to down sample their data. Here we down sample to 200 ms bins and get the aggregate across time and condition for plotting. We will end up with proportion looks to each of the AOIs which is stored in the `meanfix` column.  
+Researchers may decide to down sample their data. Here we down sample to 200 ms bins and get the aggregate across time and condition for plotting. We will end up with proportion looks to each of the AOIs which is stored in the `meanfix` column.
 
-:::{.callout-warning}
-
-Here we filter the data to start at 1500 ms and end at 4000 ms. The reason for this is that we delay the start of the audio so it is not played before the presentation of the images. 
+::: callout-warning
+Here we filter the data to start at 1500 ms and end at 4000 ms. The reason for this is that we delay the start of the audio so it is not played before the presentation of the images.
 :::
 
 ```{r}
